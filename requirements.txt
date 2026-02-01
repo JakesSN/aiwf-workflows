@@ -1,0 +1,1 @@
+requirements.txt\n# Slack SDK\nslack-sdk==3.26.2\nslack-bolt==1.18.0\n\n# Web framework\nFlask==3.0.0\nWerkzeug==3.0.1\n\n# HTTP client\nrequests==2.31.0\nurllib3==2.1.0\n\n# Environment\npython-dotenv==1.0.0\n\n# Utilities\nclick==8.1.7\n\n# Testing\npytest==7.4.3\npytest-cov==4.1.0\nresponses==0.24.1\n\n# Linting\nblack==23.12.1\nflake8==6.1.0\nmypy==1.7.1\nisort==5.13.2\n
