@@ -1,0 +1,119 @@
+name: GCP Provision Compute Resources
+
+on:
+  workflow_dispatch:
+    inputs:
+      instance_name:
+        description: 'GCP instance name'
+        required: false
+        default: 'sustainbot-instance-1'
+      machine_type:
+        description: 'GCP machine type'
+        required: false
+        default: 'f1-micro'
+      region:
+        description: 'GCP region (free tier: us-central1)'
+        required: false
+        default: 'us-central1'
+  push:
+    branches:
+      - main
+    paths:
+      - 'infrastructure/terraform/**'
+      - '.github/workflows/gcp-provision.yml'
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    env:
+      TF_VERSION: '1.5.0'
+      GCP_REGION: ${{ github.event.inputs.region || 'us-central1' }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+
+      - name: Setup Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+
+      - name: Verify GCP Configuration
+        run: |
+          gcloud config list
+          gcloud projects list
+
+      - name: Terraform Init
+        working-directory: infrastructure/terraform
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.GCP_PROJECT_ID }}-tfstate" \
+            -backend-config="prefix=aiwf"
+        env:
+          GOOGLE_PROJECT: ${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Terraform Validate
+        working-directory: infrastructure/terraform
+        run: terraform validate
+
+      - name: Terraform Plan
+        working-directory: infrastructure/terraform
+        run: |
+          terraform plan \
+            -var="project_id=${{ secrets.GCP_PROJECT_ID }}" \
+            -var="region=${{ env.GCP_REGION }}" \
+            -var="instance_name=${{ github.event.inputs.instance_name }}" \
+            -var="machine_type=${{ github.event.inputs.machine_type }}" \
+            -out=tfplan
+        env:
+          GOOGLE_PROJECT: ${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Terraform Apply
+        working-directory: infrastructure/terraform
+        run: terraform apply -auto-approve tfplan
+        env:
+          GOOGLE_PROJECT: ${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Capture Outputs
+        working-directory: infrastructure/terraform
+        id: tf_output
+        run: |
+          echo "instance_ip=$(terraform output -raw instance_external_ip)" >> $GITHUB_OUTPUT
+          echo "instance_name=$(terraform output -raw instance_name)" >> $GITHUB_OUTPUT
+          echo "internal_ip=$(terraform output -raw instance_internal_ip)" >> $GITHUB_OUTPUT
+
+      - name: Wait for Instance
+        run: |
+          echo "Waiting for instance to be ready..."
+          sleep 30
+
+      - name: Create Summary
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          ## ✅ GCP Resources Provisioned
+          
+          | Property | Value |
+          |----------|-------|
+          | Instance Name | ${{ steps.tf_output.outputs.instance_name }} |
+          | External IP | ${{ steps.tf_output.outputs.instance_ip }} |
+          | Internal IP | ${{ steps.tf_output.outputs.internal_ip }} |
+          | Region | ${{ env.GCP_REGION }} |
+          EOF
+
+      - name: Notify Slack
+        if: success()
+        uses: slackapi/slack-github-action@v1.24
+        with:
+          webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
+          payload: |
+            {"text": "✅ GCP instance provisioned: ${{ steps.tf_output.outputs.instance_name }}"}
